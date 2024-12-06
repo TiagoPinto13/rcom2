@@ -1,0 +1,53 @@
+# Part2 Exp1 Configure an IP Network
+
+- ligar gtk e colocar a port = 115200
+- login admin e pass blank
+- /system reset-configuration
+- abrir terminais em ambos os pcs
+- dar system restat (systemctl restart networking)
+- ifconfig eth1 up em ambos
+- ifconfig eth1 172.16.Y0.0/24 com .1 e .254 em diferentes pcs
+- ifconfig para ver IP e MAC adresses
+- observar IP e MAC (1.1)
+- ping observar conexão
+- comando arp -a no tux3
+- arp -d IP de eth1 visto na linha acima 
+- abrir Wireshark no tux3.eth1
+- ping do tux3 para o tux4
+- guardar log do tux3
+
+
+
+## 1.1 Observado em 3.
+```
+IP = inet 172.16.90.254 
+MAC = ether 00:c0:df:08:d5:99
+```
+
+perguntas:
+
+tpc
+
+# Part2 Exp2 Implement two bridges in a switch
+
+- ifconfig eth1 172.16.91.0/24
+
+```
+IP = 172.16.91.0/24
+MAC = 00:50:fc:59:be:3a
+```
+No GTK:
+- usar o tux ligado à consola
+- /interface bridge add name = bridge90
+- /interface bridge add name = bridge91
+- /interface bridge port remove [find interface =ether2|3|4]
+- /interface bridge port add bridge=bridge90 interface=ether3|4
+- /interface bridge port add bridge=bridge91 interface=ether2
+- confirmar com o /interface bridge port print q tudo bate certo (nao esquecer do ENTER)
+- abrir wireshark no tux3 e pingar do tux3 para o tux4 e registar
+- abrir wireshark no tux3 e pingar do tux3 para o tux2 e registar
+- A Conclusão é que não há nada do tux3 para o tux2 porque não nenhuma gateway/ligação
+- 
+
+
+
