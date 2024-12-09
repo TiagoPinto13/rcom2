@@ -26,7 +26,7 @@
 #define PASSIVE_REGEX   "%*[^(](%d,%d,%d,%d,%d,%d)%*[^\n$)]"
 
 /* Default login for case 'ftp://<host>/<url-path>' */
-#define DEFAULT_USER        "anonymous"
+#define DEFAULT_USER        "anonymous\r\n"
 #define DEFAULT_PASSWORD    "password"
 
 typedef enum { START, SINGLE, MULTIPLE, END } ResponseState;
@@ -112,12 +112,12 @@ int readResponse(const int socket, char* buffer) {
                 else buffer[index++] = byte;
                 break;
             case SINGLE:
-                printf("Single line: %c\n", byte);
+                //printf("Single line: %c\n", byte);
                 if (byte == '\n') state = END;
                 else buffer[index++] = byte;
                 break;
             case MULTIPLE:
-                printf("Multiple lines: %c\n", byte);
+                //printf("Multiple lines: %c\n", byte);
 
                 if (byte == '\n') {
                     memset(buffer, 0, MAX_LENGTH); // Limpa o buffer
@@ -133,13 +133,17 @@ int readResponse(const int socket, char* buffer) {
     }
 
     sscanf(buffer, RESPCODE_REGEX, &responseCode);
+    printf("Response code: %d\n", responseCode);
+    printf("Buffer: %s\n", buffer);
     return responseCode;
 }
 int authConn(const int socket, const char* user, const char* pass) {
     char userCommand[5 + strlen(user) + 1]; 
     sprintf(userCommand, "USER %s\r\n", user);
+    printf("User command: %s\n", userCommand); // Adicione esta linha
     char passCommand[5 + strlen(pass) + 1]; 
     sprintf(passCommand, "PASS %s\r\n", pass);
+    printf("Pass command: %s\n", passCommand); // Adicione esta linha
     char answer[MAX_LENGTH];
     
     write(socket, userCommand, strlen(userCommand));
@@ -183,7 +187,6 @@ int requestResource(const int socket, char *resource) {
     // Ler a resposta do servidor
     int response = readResponse(socket, answer);
     printf("Response after RETR command: %d\n", response); // Adicione esta linha
-    printf("Server response: %s\n", answer); // Adicione esta linha para imprimir a resposta do servidor
     return response;
 }
 
@@ -207,8 +210,9 @@ int getResource(const int socketA, const int socketB, char *filename) {
         }
     } while (bytes > 0);
     fclose(fd);
-
-    return readResponse(socketA, buffer);
+    int response = readResponse(socketA, buffer);
+    printf("conseguiu o ficheiro\n");
+    return response;
 }
 
 int closeConnection(const int socketA, const int socketB) {
@@ -237,12 +241,19 @@ int main(int argc, char *argv[]) {
     printf("Connecting to %s:%d\n", url.ip, FTP_PORT);
     int socketA = createSocket(url.ip, FTP_PORT);
     printf("Socket to '%s' and port %d created\n", url.ip, FTP_PORT);
-    if (socketA < 0 || readResponse(socketA, answer) != 220) { // 220 Service ready for new user.
-        printf("Socket to '%s' and port %d failed\n", url.ip, FTP_PORT);
-        exit(-1);
-    }
-    printf("Connected to %s:%d\n", url.ip, FTP_PORT);
+    int resp=0;
+    resp = readResponse(socketA, answer);
     
+    printf("Response from readResponse: %d\n", resp);
+    // if (socketA < 0 || resp != 220) { // 220 Service ready for new user.
+    //     printf("Socket to '%s' and port %d failed\n", url.ip, FTP_PORT);
+    //     printf("Responseddd");
+    //     exit(-1);
+    // }
+    printf("Connected to %s:%d\n", url.ip, FTP_PORT);
+    resp = readResponse(socketA, answer);
+    printf("Response from readResponse: %d\n", resp);
+
     if (authConn(socketA, url.user, url.password) != 230) { // 230 User logged in, proceed.
         printf("Authentication failed with username = '%s' and password = '%s'.\n", url.user, url.password);
         exit(-1);
@@ -268,15 +279,16 @@ int main(int argc, char *argv[]) {
 
     int response = requestResource(socketA, url.path);
     printf("Response from requestResource: %d\n", response);
-    if (response != 150) {
+    if (response != 125) {
         printf("Unknown resource '%s' in '%s:%d'\n", url.path, ip, port);
         exit(-1);
     }
     int transferResponse = getResource(socketA, socketB, url.filename);
-    printf("Response from getResource: %d\n", transferResponse);
+    resp = readResponse(socketB, answer);
+    printf("Response from readResponse: %d\n", resp);
     if (transferResponse != 226) {
         printf("Error transferring file '%s' from '%s:%d'\n", url.filename, ip, port);
-        printf("Transfer response: %s\n", answer); // Adicione esta linha
+        printf("Transfer response: %d\n", transferResponse); // Adicione esta linha
         exit(-1);
     }
 
