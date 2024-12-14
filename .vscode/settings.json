@@ -2,7 +2,9 @@
     "files.associations": {
         "inet.h": "c",
         "stdio.h": "c",
-        "unistd.h": "c"
+        "unistd.h": "c",
+        "netdb.h": "c",
+        "ftp_client.h": "c"
     },
     "C_Cpp.errorSquiggles": "disabled"
 }

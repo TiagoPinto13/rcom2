@@ -1,57 +1,24 @@
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
-#include <unistd.h>
-#include <arpa/inet.h>
-#include <netdb.h>
-#include <fcntl.h>
-#include <sys/socket.h>
-#include <sys/types.h>
-#include <netinet/in.h>
-#include <regex.h>
-#include <sys/stat.h>
-#include <time.h>
-#include <errno.h>
-#include <ctype.h>
 #include "../include/ftp_client.h"
 
-#define SERVER_PORT 21
-#define MAX_BUFFER_SIZE 1024
-#define MAX_LENGTH 1024
-#define FTP_PORT 21
-#define AT              "@"
-#define BAR             "/"
-#define HOST_REGEX      "%*[^/]//%[^/]"
-#define HOST_AT_REGEX   "%*[^/]//%*[^@]@%[^/]"
-#define RESOURCE_REGEX  "%*[^/]//%*[^/]/%s"
-#define USER_REGEX      "%*[^/]//%[^:/]"
-#define PASS_REGEX      "%*[^/]//%*[^:]:%[^@\n$]"
-#define RESPCODE_REGEX  "%d"
-#define PASSIVE_REGEX   "%*[^(](%d,%d,%d,%d,%d,%d)%*[^\n$)]"
 
-/* Default login for case 'ftp://<host>/<url-path>' */
-#define DEFAULT_USER        "anonymous"
-#define DEFAULT_PASSWORD    "password"
 
-typedef enum { START, SINGLE, MULTIPLE, END } ResponseState;
-
-int parse_url(const char *url_str, URL *parsed_url) { // Renomeado para url_str
+int parseURL(const char *url_str, URL *parsed_url) {
     regex_t regex;
     regcomp(&regex, BAR, 0);
-    if (regexec(&regex, url_str, 0, NULL, 0)) return -1; // Usar url_str
+    if (regexec(&regex, url_str, 0, NULL, 0)) return -1;
 
     regcomp(&regex, AT, 0);
     if (regexec(&regex, url_str, 0, NULL, 0) != 0) { // ftp://<host>/<url-path>
-        sscanf(url_str, HOST_REGEX, parsed_url->host); // Usar parsed_url
+        sscanf(url_str, HOST, parsed_url->host);
         strcpy(parsed_url->user, DEFAULT_USER);
         strcpy(parsed_url->password, DEFAULT_PASSWORD);
     } else { // ftp://[<user>:<password>@]<host>/<url-path>
-        sscanf(url_str, HOST_AT_REGEX, parsed_url->host);
-        sscanf(url_str, USER_REGEX, parsed_url->user);
-        sscanf(url_str, PASS_REGEX, parsed_url->password);
+        sscanf(url_str, HOST_AT, parsed_url->host);
+        sscanf(url_str, USER, parsed_url->user);
+        sscanf(url_str, PASS, parsed_url->password);
     }
 
-    sscanf(url_str, RESOURCE_REGEX, parsed_url->path);
+    sscanf(url_str, PATH, parsed_url->path);
     strcpy(parsed_url->filename, strrchr(url_str, '/') + 1);
 
     struct hostent *h;
@@ -66,7 +33,7 @@ int parse_url(const char *url_str, URL *parsed_url) { // Renomeado para url_str
            strlen(parsed_url->password) && strlen(parsed_url->path) && strlen(parsed_url->filename));
 }
 
-int createSocket(char *ip, int port) {
+int establishConnection(char *ip, int port) {
     int sockfd;
     struct sockaddr_in server_addr;
 
@@ -87,7 +54,7 @@ int createSocket(char *ip, int port) {
     return sockfd;
 }
 
-int readResponse(int socket_fd, char *response_buffer) {
+int getResponse(int socket_fd, char *response_buffer) {
     fd_set socket_set;
     struct timeval timeout;
     int bytes_received = 0, total_bytes = 0, response_code = 0;
@@ -121,23 +88,23 @@ int readResponse(int socket_fd, char *response_buffer) {
             }
             total_bytes += bytes_received;
 
-            // Debug: Mostrar o trecho recebido
+            // Debug: Show the received segment
             printf("Partial Server Response: '%.*s'\n", bytes_received, 
                    response_buffer + total_bytes - bytes_received);
 
-            // Verificar se temos o final da resposta
+            // Check if we have the end of the response
             if (strstr(response_buffer, "\r\n")) {
-                // Respostas de múltiplas linhas do FTP começam com "xyz-" e terminam com "xyz " (xyz = código)
-                char *last_line = strrchr(response_buffer, '\n'); // Encontrar a última nova linha
+                // FTP multi-line responses start with "xyz-" and end with "xyz " (xyz = code)
+                char *last_line = strrchr(response_buffer, '\n'); // Find the last newline
                 if (last_line && strlen(last_line) > 4 && isdigit(last_line[1]) && 
                     isdigit(last_line[2]) && isdigit(last_line[3]) && last_line[4] == ' ') {
-                    break; // Marcador de final de resposta válido
+                    break; // Valid end of response marker
                 }
             }
         }
     }
 
-    response_buffer[total_bytes] = '\0'; // Null-terminar a string de resposta
+    response_buffer[total_bytes] = '\0'; // Null-terminate the response string
     printf("Full Server Response: '%s'\n", response_buffer);
 
     if (total_bytes == 0) {
@@ -145,7 +112,7 @@ int readResponse(int socket_fd, char *response_buffer) {
         return -1;
     }
 
-    // Analisar o código de resposta da primeira linha
+    // Parse the response code from the first line
     if (sscanf(response_buffer, "%3d", &response_code) != 1) {
         fprintf(stderr, "Failed to parse server response: '%s'\n", response_buffer);
         return -1;
@@ -153,100 +120,104 @@ int readResponse(int socket_fd, char *response_buffer) {
 
     return response_code;
 }
-int authConn(const int socket, const char* user, const char* pass) {
+
+/*
+Function Comment:
+
+
+*/
+int loginToServer(const int socket, const char* user, const char* pass) {
     char userCommand[MAX_LENGTH]; 
     char passCommand[MAX_LENGTH]; 
     char answer[MAX_LENGTH];
     
-    // Verificar se user e pass não são NULL
+    // Check if user and pass are not NULL
     if (user == NULL || pass == NULL) {
         printf("Error: Username or password is NULL\n");
         return -1;
     }
 
-    // Construir o comando USER com verificação de tamanho
+    // Build the USER command with size verification
     if (snprintf(userCommand, sizeof(userCommand), "USER %s\r\n", user) < 0) {
         printf("Error creating USER command\n");
         return -1;
     }
     
-    // Debug: mostrar o comando que será enviado
+    // Debug: show the command to be sent
     printf("Sending USER command: %s", userCommand);
     
-    // Enviar comando USER
+    // Send USER command
     if (write(socket, userCommand, strlen(userCommand)) < 0) {
         perror("Error sending USER command");
         return -1;
     }
 
-    int responseCode = readResponse(socket, answer);
+    int responseCode = getResponse(socket, answer);
     printf("Response after USER command: %s\n", answer);
     if (responseCode != 331) { // 331 User name okay, need password.
         printf("Authentication failed: %s\n", answer);
         return -1;
     }
 
-    // Construir o comando PASS com verificação de tamanho
+    // Build the PASS command with size verification
     if (snprintf(passCommand, sizeof(passCommand), "PASS %s\r\n", pass) < 0) {
         printf("Error creating PASS command\n");
         return -1;
     }
 
-    // Enviar comando PASS
+    // Send PASS command
     if (write(socket, passCommand, strlen(passCommand)) < 0) {
         perror("Error sending PASS command");
         return -1;
     }
 
-    responseCode = readResponse(socket, answer);
+    responseCode = getResponse(socket, answer);
     printf("Response after PASS command: %s\n", answer);
     return responseCode;
 }
 
-int passiveMode(const int socket, char *ip, int *port) {
+int switchToPassiveMode(const int socket, char *ip, int *port) {
     char answer[MAX_LENGTH];
     int ip1, ip2, ip3, ip4, port1, port2;
     write(socket, "PASV\r\n", 6);
-    if (readResponse(socket, answer) != 227) return -1; // 227 Entering Passive Mode.
+    if (getResponse(socket, answer) != 227) return -1; // 227 Entering Passive Mode.
 
-    sscanf(answer, PASSIVE_REGEX, &ip1, &ip2, &ip3, &ip4, &port1, &port2);
+    sscanf(answer, PASSIVE, &ip1, &ip2, &ip3, &ip4, &port1, &port2);
     *port = port1 * 256 + port2;
     sprintf(ip, "%d.%d.%d.%d", ip1, ip2, ip3, ip4);
 
     return 227;
 }
 
-int requestResource(const int socket, char *resource) {
+int retrieveFile(const int socket, char *path) {
     char typeCommand[] = "TYPE I\r\n";
     char fileCommand[MAX_BUFFER_SIZE], answer[MAX_LENGTH];
     
-    // Primeiro, definir modo de transferência binário
+    // First, set binary transfer mode
     write(socket, typeCommand, strlen(typeCommand));
-    int response = readResponse(socket, answer);
+    int response = getResponse(socket, answer);
     if (response != 200) {  // 200 Type set to I
         printf("Failed to set binary mode: %s\n", answer);
         return -1;
     }
 
-    printf("Resource: %s\n", resource);
+    printf("path: %s\n", path);
     printf("Socket: %d\n", socket);
 
-    snprintf(fileCommand, sizeof(fileCommand), "RETR %s\r\n", resource);
+    snprintf(fileCommand, sizeof(fileCommand), "RETR %s\r\n", path);
     if (write(socket, fileCommand, strlen(fileCommand)) < 0) {
         perror("Error sending RETR command");
         return -1;
     }
     printf("File command: %s", fileCommand);
 
-    response = readResponse(socket, answer);
+    response = getResponse(socket, answer);
     printf("Response after RETR command: %d\n", response);
     printf("Server response: %s\n", answer);
     return response;
 }
- 
 
-
-int getResource(const int socketA, const int socketB, char *filename) {
+int saveFile(const int controlSocket, const int dataSocket, char *filename) {
     printf("Saving file to: %s\n", filename);
 
     FILE *file = fopen(filename, "wb");
@@ -260,7 +231,7 @@ int getResource(const int socketA, const int socketB, char *filename) {
     size_t total_bytes = 0;
     time_t last_update = time(NULL);
 
-    while ((bytes_read = read(socketB, buffer, sizeof(buffer))) > 0) {
+    while ((bytes_read = read(dataSocket, buffer, sizeof(buffer))) > 0) {
         if (fwrite(buffer, 1, bytes_read, file) < bytes_read) {
             perror("File writing failed");
             fclose(file);
@@ -269,7 +240,7 @@ int getResource(const int socketA, const int socketB, char *filename) {
         
         total_bytes += bytes_read;
         
-        // Atualizar progresso a cada segundo
+        // Update progress every second
         time_t current_time = time(NULL);
         if (current_time > last_update) {
             printf("\rReceived: %.2f MB", total_bytes / (1024.0 * 1024.0));
@@ -283,34 +254,34 @@ int getResource(const int socketA, const int socketB, char *filename) {
     
     fclose(file);
 
-    // Fechar o socket de dados após a transferência
-    close(socketB);
+    // Close the data socket after transfer
+    close(dataSocket);
 
-    // Aguardar a resposta de conclusão do servidor no socket de controle
+    // Wait for the completion response from the server on the control socket
     char answer[MAX_LENGTH];
-    int response = readResponse(socketA, answer);
+    int response = getResponse(controlSocket, answer);
     printf("Transfer completion response: %d\n", response);
     
     return response;
 }
 
-int closeConnection(const int socketA, const int socketB) {
+int terminateConnection(const int controlSocket, const int dataSocket) {
     char answer[MAX_LENGTH];
     int result = 0;
     
-    // Enviar comando QUIT
-    write(socketA, "QUIT\r\n", 6);
-    if(readResponse(socketA, answer) != 221) return -1; 
+    // Send QUIT command
+    write(controlSocket, "QUIT\r\n", 6);
+    if(getResponse(controlSocket, answer) != 221) return -1; 
     
-    // Fechar o socket de controle
-    if (close(socketA) < 0) {
+    // Close the control socket
+    if (close(controlSocket) < 0) {
         perror("Error closing control socket");
         result = -1;
     }
     
-    // Tentar fechar o socket de dados apenas se ainda não foi fechado
-    if (fcntl(socketB, F_GETFD) != -1) {
-        if (close(socketB) < 0) {
+    // Try to close the data socket only if it hasn't been closed yet
+    if (fcntl(dataSocket, F_GETFD) != -1) {
+        if (close(dataSocket) < 0) {
             perror("Error closing data socket");
             result = -1;
         }
@@ -318,6 +289,7 @@ int closeConnection(const int socketA, const int socketB) {
     
     return result;
 }
+
 int main(int argc, char *argv[]) {
     if (argc != 2) {
         printf("Usage: ./download ftp://[<user>:<password>@]<host>/<url-path>\n");
@@ -326,63 +298,62 @@ int main(int argc, char *argv[]) {
 
     URL url;
     memset(&url, 0, sizeof(url));
-    if (parse_url(argv[1], &url) != 0) { 
+    if (parseURL(argv[1], &url) != 0) { 
         printf("Parse error. Usage: ./download ftp://[<user>:<password>@]<host>/<url-path>\n");
         exit(-1);
     }
     
-    printf("Host: %s\nResource: %s\nFile: %s\nUser: %s\nPassword: %s\nIP Address: %s\n", url.host, url.path, url.filename, url.user, url.password, url.ip);
+    printf("Host: %s\npath: %s\nFile: %s\nUser: %s\nPassword: %s\nIP Address: %s\n", url.host, url.path, url.filename, url.user, url.password, url.ip);
 
     char answer[MAX_LENGTH];
-    printf("Connecting to %s:%d\n", url.ip, FTP_PORT);
-    int socketA = createSocket(url.ip, FTP_PORT);
-    printf("Socket to '%s' and port %d created\n", url.ip, FTP_PORT);
-    int responseCode = readResponse(socketA, answer);
-    printf("Response from readResponse: %d\n", responseCode);
-    if (socketA < 0 || responseCode != 220) { // 220 Service ready for new user.
-        printf("Socket to '%s' and port %d failed\n", url.ip, FTP_PORT);
+    printf("Connecting to %s:%d\n", url.ip, SERVER_PORT);
+    int controlSocket = establishConnection(url.ip, SERVER_PORT);
+    printf("Socket to '%s' and port %d created\n", url.ip, SERVER_PORT);
+    int responseCode = getResponse(controlSocket, answer);
+    printf("Response from getResponse: %d\n", responseCode);
+    if (controlSocket < 0 || responseCode != 220) { // 220 Service ready for new user.
+        printf("Socket to '%s' and port %d failed\n", url.ip, SERVER_PORT);
         exit(-1);
     }
-    printf("Connected to %s:%d\n", url.ip, FTP_PORT);
+    printf("Connected to %s:%d\n", url.ip, SERVER_PORT);
     
-    if (authConn(socketA, url.user, url.password) != 230) { // 230 User logged in, proceed.
+    if (loginToServer(controlSocket, url.user, url.password) != 230) { // 230 User logged in, proceed.
         printf("Authentication failed with username = '%s' and password = '%s'.\n", url.user, url.password);
         exit(-1);
     }
     printf("Authenticated with username = '%s' and password = '%s'\n", url.user, url.password);
     int port;
     char ip[MAX_LENGTH];
-    if (passiveMode(socketA, ip, &port) != 227) {
+    if (switchToPassiveMode(controlSocket, ip, &port) != 227) {
         printf("Passive mode failed\n");
-        printf("Response from PASV command: %s\n", answer); // Adicione esta linha
+        printf("Response from PASV command: %s\n", answer);
         exit(-1);
     }
     printf("Passive mode established. IP: %s, Port: %d\n", ip, port);
 
-
-    int socketB = createSocket(ip, port);
-    if (socketB < 0) {
+    int dataSocket = establishConnection(ip, port);
+    if (dataSocket < 0) {
         printf("Socket to '%s:%d' failed\n", ip, port);
         exit(-1);
     } else {
         printf("Data connection established to %s:%d\n", ip, port);
     }
 
-    int response = requestResource(socketA, url.path);
-    printf("Response from requestResource: %d\n", response);
-    if (response != 150  && response !=125) {
-        printf("Unknown resource '%s' in '%s:%d'\n", url.path, ip, port);
+    int response = retrieveFile(controlSocket, url.path);
+    printf("Response from retrieveFile: %d\n", response);
+    if (response != 150 && response != 125) {
+        printf("Unknown path '%s' in '%s:%d'\n", url.path, ip, port);
         exit(-1);
     }
-    int transferResponse = getResource(socketA, socketB, url.filename);
-    printf("Response from getResource: %d\n", transferResponse);
+    int transferResponse = saveFile(controlSocket, dataSocket, url.filename);
+    printf("Response from saveFile: %d\n", transferResponse);
     if (transferResponse != 226) {
         printf("Error transferring file '%s' from '%s:%d'\n", url.filename, ip, port);
         printf("Transfer response: %s\n", answer); 
         exit(-1);
     }
 
-    if (closeConnection(socketA, socketB) != 0) {
+    if (terminateConnection(controlSocket, dataSocket) != 0) {
         printf("Sockets close error\n");
         exit(-1);
     }
